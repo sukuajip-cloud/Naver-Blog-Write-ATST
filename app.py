@@ -2,7 +2,6 @@ import streamlit as st
 from google import genai
 import requests
 from bs4 import BeautifulSoup
-import random
 
 # 페이지 기본 설정
 st.set_page_config(page_title="Smart Blog AI Studio", page_icon="✨", layout="wide")
@@ -54,13 +53,13 @@ def fetch_product_info(url):
                 img_url = og_img['content']
                 if img_url.startswith('//'): img_url = 'https:' + img_url
 
-            # 2. 제목 추출 (쇼핑몰 방화벽에 막혀도 제목은 보통 노출됨)
+            # 2. 제목 추출
             title = ""
             og_title = soup.find('meta', property='og:title')
             if og_title and og_title.get('content'): title = og_title['content']
             elif soup.title: title = soup.title.string.strip()
 
-            # 3. 요약 내용 추출 (본문이 막힐 경우를 대비한 Description 추출)
+            # 3. 요약 내용 추출
             desc = ""
             og_desc = soup.find('meta', property='og:description') or soup.find('meta', attrs={'name': 'description'})
             if og_desc and og_desc.get('content'): desc = og_desc['content']
@@ -74,7 +73,6 @@ def fetch_product_info(url):
             for s in soup(["script", "style", "nav", "footer"]): s.decompose()
             body_text = soup.get_text(separator=' ', strip=True)
             
-            # 본문이 너무 짧거나 막혔을 경우 메타(요약) 데이터로 대체
             final_text = body_text[:3000] if len(body_text) > 100 else f"요약 설명: {desc}"
 
             return {"title": title, "price": price, "img": img_url, "desc": desc, "body": final_text}
@@ -117,7 +115,7 @@ def generate_blog_post():
         - 상품 링크: {url}
 
         [작성 가이드]
-        1. 정보 통합: 제공된 '참고 상품명'과 '상세내용'을 철저히 분석하여 스펙, 특징 등을 원고에 정확히 반영하세요. (상품 내용이 부족하면 URL과 주제를 기반으로 추론하세요.)
+        1. 정보 통합: 제공된 '참고 상품명'과 '상세내용'을 철저히 분석하여 스펙, 특징 등을 원고에 정확히 반영하세요.
         2. 이미지 가이드: 
            - 최상단에 `![상품 이미지]({s_img})` 마크다운을 넣어 실제 제품 사진이 보이게 하세요.
            - 중간중간 `[📸 이미지: (필요한 사진 구체적 묘사)]` 와 센스있는 캡션을 넣으세요.
@@ -146,19 +144,20 @@ with col1:
     st.text_input("2. 참고 상품 링크 (선택)", key="url_input", on_change=url_changed, placeholder="쿠팡, 네이버 쇼핑 등 URL")
     st.text_area("3. 나의 실제 후기/메모", key="text_input", height=130, placeholder="메모할 내용 입력...")
     
+    # 에러의 원인이었던 스위치 부분 (값을 강제로 변경하지 않도록 수정)
     st.toggle("⚙️ 고급 설정 열기 (톤/스타일 등)", key="adv_settings")
     if st.session_state.adv_settings:
         with st.container(border=True):
-            st.info("이 기능은 추후 업데이트를 통해 텍스트 프롬프트에 동적으로 반영될 예정입니다. 현재는 숨겨진 기본값으로 작성됩니다.")
+            st.info("이 기능은 추후 업데이트를 통해 텍스트 프롬프트에 동적으로 반영될 예정입니다.")
     
-    # 💡 명확하게 분리된 3개의 액션 버튼
     st.markdown("---")
     st.markdown("##### 🛠️ 작업 실행")
     
     btn_col1, btn_col2 = st.columns(2)
+    
+    # 💡 에러 수정됨: st.session_state.adv_settings = False 코드 제거
     with btn_col1:
         if st.button("🔍 1차 검토 (정보 불러오기)", use_container_width=True):
-            st.session_state.adv_settings = False
             if st.session_state.url_input:
                 with st.spinner("상품 정보를 긁어오고 있습니다..."):
                     st.session_state.scraped_data = fetch_product_info(st.session_state.url_input)
@@ -167,7 +166,6 @@ with col1:
                 
     with btn_col2:
         if st.button("🚀 최종 블로그 원고 작성", type="primary", use_container_width=True):
-            st.session_state.adv_settings = False
             if not st.session_state.topic_input:
                 st.warning("주제를 입력해주세요!")
             else:
@@ -180,7 +178,6 @@ with col1:
 with col2:
     st.subheader("📄 검토 및 완성된 원고")
     
-    # 1차 검토 결과 (정보 확인창)
     if st.session_state.scraped_data:
         st.success("💡 1차 검토: URL에서 아래 정보를 확인했습니다.")
         with st.container(border=True):
@@ -192,11 +189,9 @@ with col2:
             with c2:
                 st.write(f"**제품명:** {st.session_state.scraped_data.get('title', '없음')}")
                 st.write(f"**가격:** {st.session_state.scraped_data.get('price', '없음')}")
-                # 긁어온 본문 중 앞부분 150자만 미리보기로 보여줌
                 preview_text = st.session_state.scraped_data.get("body", "")[:150]
                 st.caption(f"**내용 미리보기:** {preview_text}...")
 
-    # 최종 작성된 원고 출력
     if st.session_state.generated_text:
         st.markdown("---")
         st.markdown(st.session_state.generated_text)
