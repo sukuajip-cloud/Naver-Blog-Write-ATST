@@ -26,13 +26,25 @@ def url_changed():
     st.session_state.scraped_data = None
     st.session_state.generated_text = None
 
-# --- 💡 1차 검토: AI 찐 요약 엔진 ---
+def get_valid_model(client):
+    """현재 API 키에서 실제로 지원하는 생성 모델명을 탐색"""
+    try:
+        models = [m.name.replace('models/', '') for m in client.models.list() 
+                  if 'gemini' in m.name and 'embed' not in m.name and 'aqa' not in m.name]
+        if models:
+            # flash 계열 우선 선택, 없으면 첫 번째 모델 선택
+            flash_models = [m for m in models if 'flash' in m]
+            return flash_models[0] if flash_models else models[0]
+    except:
+        pass
+    return "gemini-2.5-flash"
+
+# --- 1차 검토: AI 요약 엔진 ---
 def fetch_and_summarize(url):
     if not url or "http" not in url:
         return None
     
     try:
-        # 네이버 블로그 모바일 우회
         if "blog.naver.com" in url and "m.blog.naver.com" not in url:
             url = url.replace("blog.naver.com", "m.blog.naver.com")
 
@@ -61,11 +73,12 @@ def fetch_and_summarize(url):
                 s.decompose()
             body_text = soup.get_text(separator=' ', strip=True)[:4000]
             
-            # 💡 [핵심] 원문 복사가 아닌 "진짜 요약"을 강제하는 프롬프트
-            ai_summary = "요약 내용을 불러오지 못했습니다. (텍스트가 너무 짧거나 보안에 막힘)"
+            ai_summary = "요약 내용을 불러오지 못했습니다. (텍스트 부족 또는 차단)"
             if API_KEY and len(body_text) > 50:
                 try:
                     client = genai.Client(api_key=API_KEY)
+                    target_model = get_valid_model(client)
+                    
                     summary_prompt = f"""
                     아래 제공된 웹문서의 원문을 읽고, 절대 원문을 그대로 복사하지 말고 당신의 언어로 '새롭게' 3~4줄로 핵심만 요약해주세요.
                     글머리 기호(- )를 사용하여 가독성 좋게 작성해주세요.
@@ -73,8 +86,7 @@ def fetch_and_summarize(url):
                     [원문 텍스트]
                     {body_text}
                     """
-                    # 가장 안정적이고 똑똑한 모델 강제 지정
-                    res = client.models.generate_content(model='gemini-1.5-flash', contents=summary_prompt)
+                    res = client.models.generate_content(model=target_model, contents=summary_prompt)
                     ai_summary = res.text
                 except Exception as e:
                     ai_summary = f"⚠️ 요약 중 에러 발생: {str(e)}"
@@ -85,18 +97,18 @@ def fetch_and_summarize(url):
     except Exception as e:
         return {"title": "크롤링 에러", "price": "", "img": "", "summary": str(e), "raw_body": ""}
 
-# --- 💡 10년 차 SEO 전문가 블로그 작성 엔진 ---
+# --- 최종 블로그 작성 엔진 ---
 def generate_blog_post(use_scraped_data):
     if not API_KEY:
         return "🚨 [오류] API 키가 설정되지 않았습니다."
     try:
         client = genai.Client(api_key=API_KEY)
+        target_model = get_valid_model(client)
         
         topic = st.session_state.topic_input
         keyword = st.session_state.keyword_input
         url = st.session_state.url_input
         raw_text = st.session_state.text_input
-        
         tone = st.session_state.get("tone", "친근한 느낌, AI스럽지 않게 자연스러운 어투")
         
         s_data = st.session_state.scraped_data
@@ -107,7 +119,6 @@ def generate_blog_post(use_scraped_data):
             s_info = "- URL 참고 정보 없음 (또는 사용 안 함)"
             s_img = ""
             
-        # 💡 제공해주신 완벽한 SEO 마케터 프롬프트 이식
         prompt = f"""
         다음 지침을 참고하여 상위노출 로직에 최적화된 네이버 블로그 포스팅을 작성해줘.
         모든 지침을 꼼꼼하게 확인하여 적용해주어야 해.
@@ -115,7 +126,7 @@ def generate_blog_post(use_scraped_data):
         [작성 지침]
         1. 작성자 : 10년차 SEO 전문가
         2. 어투 : {tone}
-        3. 글자수 : 최대한 풍부하고 상세하게 작성해줘. (목표: 3000~5000자 수준으로 아주 길게)
+        3. 글자수 : 풍부하고 상세하게 서술형으로 작성할 것.
         4. 정확하지 않은 정보는 배제할 것. 제공된 '참고 자료 상세'를 바탕으로 구체적인 데이터를 언급할 것.
         5. '나의 실제 메모/경험담'을 듬뿍 담은 독창적인 원고를 작성해줘. 중복 문서로 처리되지 않도록 주의해.
         6. 서론, 본론, 결론의 명확한 구조를 가질 것.
@@ -131,7 +142,7 @@ def generate_blog_post(use_scraped_data):
 
         [작성 소스 데이터]
         - 블로그 제목 : {topic}
-        - 핵심 키워드 : {keyword} (본문 내에 정확히 5회 반복되도록 신경 쓰고, 나머지는 유사 단어로 다채롭게 활용)
+        - 핵심 키워드 : {keyword} (본문 내에 5회 자연스럽게 반복, 나머지는 유사 단어로 활용)
         - 나의 실제 메모/경험담 : {raw_text}
         {s_info}
 
@@ -142,8 +153,11 @@ def generate_blog_post(use_scraped_data):
         3. 정보는 정확하며 출처(참고자료)가 명확하게 반영되었는가?
         """
         
-        # 블로그 작성에 최적화된 1.5 Pro 모델을 우선 사용하도록 지정
-        res = client.models.generate_content(model='gemini-1.5-pro', contents=prompt, config={"temperature": 0.85})
+        res = client.models.generate_content(
+            model=target_model, 
+            contents=prompt, 
+            config={"temperature": 0.85}
+        )
         return res.text
 
     except Exception as e:
@@ -189,7 +203,7 @@ with col1:
             if not st.session_state.topic_input or not st.session_state.keyword_input:
                 st.warning("제목과 핵심 키워드를 모두 입력해주세요!")
             else:
-                with st.spinner("10년 차 SEO 마케터의 뇌로 깊이 있는 원고를 작성 중입니다... (최대 1분 소요)"):
+                with st.spinner("SEO 마케터 로직으로 원고를 작성 중입니다..."):
                     use_data = st.session_state.get("use_scraped_data", True)
                     st.session_state.generated_text = generate_blog_post(use_scraped_data=use_data)
                     
