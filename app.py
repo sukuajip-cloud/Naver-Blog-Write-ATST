@@ -10,6 +10,19 @@ st.set_page_config(page_title="Smart Blog AI Studio", page_icon="✨", layout="w
 # API 키 가져오기 (Secrets 연동)
 API_KEY = st.secrets.get("GEMINI_API_KEY")
 
+# 💡 초기화 기능을 위한 세션 상태(Session State) 설정
+if "topic_input" not in st.session_state:
+    st.session_state.topic_input = ""
+if "url_input" not in st.session_state:
+    st.session_state.url_input = ""
+if "text_input" not in st.session_state:
+    st.session_state.text_input = ""
+
+def clear_inputs():
+    st.session_state.topic_input = ""
+    st.session_state.url_input = ""
+    st.session_state.text_input = ""
+
 def fetch_product_info(url):
     if not url or "http" not in url:
         return ""
@@ -78,9 +91,10 @@ col1, col2 = st.columns([1, 1.2])
 
 with col1:
     st.subheader("📝 핵심 정보 입력")
-    topic = st.text_input("1. 블로그 주제", placeholder="예: 차박용 미니 로봇청소기 사용 후기")
-    product_url = st.text_input("2. 참고 상품 링크 (선택)", placeholder="쿠팡, 스마트스토어 등 URL")
-    raw_text = st.text_area("3. 나의 실제 후기/메모", height=130, placeholder="직접 써보니 가볍고 좋은데 배터리가 살짝 아쉬움...")
+    # key 속성을 추가하여 세션 상태와 연동합니다
+    topic = st.text_input("1. 블로그 주제", key="topic_input", placeholder="예: 차박용 미니 로봇청소기 사용 후기")
+    product_url = st.text_input("2. 참고 상품 링크 (선택)", key="url_input", placeholder="쿠팡, 스마트스토어 등 URL")
+    raw_text = st.text_area("3. 나의 실제 후기/메모", key="text_input", height=130, placeholder="직접 써보니 가볍고 좋은데 배터리가 살짝 아쉬움...")
     
     with st.expander("⚙️ AI 페르소나 및 고급 설정"):
         tone = st.selectbox("글쓰기 톤", ["친근한 내돈내산 리뷰형", "정보 전달 전문 블로거형", "재치있는 에세이형", "진중한 분석형"])
@@ -89,7 +103,12 @@ with col1:
         expertise = st.slider("전문성", 1, 10, 7)
         friendliness = st.slider("친밀도", 1, 10, 9)
     
-    submit_btn = st.button("🚀 블로그 원고 자동 완성", use_container_width=True, type="primary")
+    # 💡 생성 버튼과 초기화 버튼을 나란히 배치
+    btn_col1, btn_col2 = st.columns([3, 1])
+    with btn_col1:
+        submit_btn = st.button("🚀 블로그 원고 자동 완성", use_container_width=True, type="primary")
+    with btn_col2:
+        st.button("🗑️ 초기화", on_click=clear_inputs, use_container_width=True)
 
 with col2:
     st.subheader("📄 완성된 원고")
@@ -99,6 +118,6 @@ with col2:
         else:
             with st.spinner("AI가 최적의 원고를 작성하고 있습니다..."):
                 result = generate_blog_post(topic, raw_text, product_url, tone, creativity, expertise, friendliness, photo_style)
-                st.text_area("", value=result, height=520)
+                st.text_area("결과창", value=result, height=520, label_visibility="collapsed")
     else:
         st.info("왼쪽 정보를 입력하고 [블로그 원고 자동 완성] 버튼을 누르면 이곳에 결과가 출력됩니다.")
