@@ -28,13 +28,12 @@ def url_changed():
     st.session_state.scraped_data = None
     st.session_state.generated_text = None
 
-# --- 💡 독하게 튜닝한 크롤링 엔진 (방화벽 우회 및 메타데이터 추출 강화) ---
+# --- 💡 독하게 튜닝한 크롤링 엔진 ---
 def fetch_product_info(url):
     if not url or "http" not in url:
         return None
     
     try:
-        # 봇(Bot)이 아닌 실제 사람 브라우저처럼 완벽하게 위장
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -73,6 +72,7 @@ def fetch_product_info(url):
             for s in soup(["script", "style", "nav", "footer"]): s.decompose()
             body_text = soup.get_text(separator=' ', strip=True)
             
+            # 본문을 최대 3000자까지 확보 (블로그 작성 AI에게 전달할 용도)
             final_text = body_text[:3000] if len(body_text) > 100 else f"요약 설명: {desc}"
 
             return {"title": title, "price": price, "img": img_url, "desc": desc, "body": final_text}
@@ -144,7 +144,6 @@ with col1:
     st.text_input("2. 참고 상품 링크 (선택)", key="url_input", on_change=url_changed, placeholder="쿠팡, 네이버 쇼핑 등 URL")
     st.text_area("3. 나의 실제 후기/메모", key="text_input", height=130, placeholder="메모할 내용 입력...")
     
-    # 에러의 원인이었던 스위치 부분 (값을 강제로 변경하지 않도록 수정)
     st.toggle("⚙️ 고급 설정 열기 (톤/스타일 등)", key="adv_settings")
     if st.session_state.adv_settings:
         with st.container(border=True):
@@ -155,7 +154,6 @@ with col1:
     
     btn_col1, btn_col2 = st.columns(2)
     
-    # 💡 에러 수정됨: st.session_state.adv_settings = False 코드 제거
     with btn_col1:
         if st.button("🔍 1차 검토 (정보 불러오기)", use_container_width=True):
             if st.session_state.url_input:
@@ -178,6 +176,7 @@ with col1:
 with col2:
     st.subheader("📄 검토 및 완성된 원고")
     
+    # 💡 1차 검토 결과 UI 개선 (내용 미리보기 확장)
     if st.session_state.scraped_data:
         st.success("💡 1차 검토: URL에서 아래 정보를 확인했습니다.")
         with st.container(border=True):
@@ -189,9 +188,13 @@ with col2:
             with c2:
                 st.write(f"**제품명:** {st.session_state.scraped_data.get('title', '없음')}")
                 st.write(f"**가격:** {st.session_state.scraped_data.get('price', '없음')}")
-                preview_text = st.session_state.scraped_data.get("body", "")[:150]
-                st.caption(f"**내용 미리보기:** {preview_text}...")
+            
+            st.markdown("---")
+            # 말줄임표 없이 깔끔하게 1000자까지 텍스트 출력
+            preview_text = st.session_state.scraped_data.get("body", "")[:1000]
+            st.markdown(f"**내용 미리보기 (최대 1000자):**\n\n{preview_text}")
 
+    # 최종 작성된 원고 출력
     if st.session_state.generated_text:
         st.markdown("---")
         st.markdown(st.session_state.generated_text)
