@@ -26,18 +26,25 @@ def url_changed():
     st.session_state.scraped_data = None
     st.session_state.generated_text = None
 
-def get_valid_model(client):
-    """현재 API 키에서 실제로 지원하는 생성 모델명을 탐색"""
-    try:
-        models = [m.name.replace('models/', '') for m in client.models.list() 
-                  if 'gemini' in m.name and 'embed' not in m.name and 'aqa' not in m.name]
-        if models:
-            # flash 계열 우선 선택, 없으면 첫 번째 모델 선택
-            flash_models = [m for m in models if 'flash' in m]
-            return flash_models[0] if flash_models else models[0]
-    except:
-        pass
-    return "gemini-2.5-flash"
+# --- 💡 모델명을 직접 지정하지 않고 살아있는 모델을 직접 탐색하여 생성 ---
+def generate_with_fallback(client, prompt, config=None):
+    available_models = [
+        m.name.replace('models/', '') for m in client.models.list() 
+        if 'gemini' in m.name and 'embed' not in m.name and 'aqa' not in m.name
+    ]
+    
+    last_error = "사용 가능한 Gemini 모델을 찾을 수 없습니다."
+    for model_name in available_models:
+        try:
+            if config:
+                res = client.models.generate_content(model=model_name, contents=prompt, config=config)
+            else:
+                res = client.models.generate_content(model=model_name, contents=prompt)
+            return res.text
+        except Exception as e:
+            last_error = str(e)
+            continue
+    raise Exception(last_error)
 
 # --- 1차 검토: AI 요약 엔진 ---
 def fetch_and_summarize(url):
@@ -77,8 +84,6 @@ def fetch_and_summarize(url):
             if API_KEY and len(body_text) > 50:
                 try:
                     client = genai.Client(api_key=API_KEY)
-                    target_model = get_valid_model(client)
-                    
                     summary_prompt = f"""
                     아래 제공된 웹문서의 원문을 읽고, 절대 원문을 그대로 복사하지 말고 당신의 언어로 '새롭게' 3~4줄로 핵심만 요약해주세요.
                     글머리 기호(- )를 사용하여 가독성 좋게 작성해주세요.
@@ -86,8 +91,7 @@ def fetch_and_summarize(url):
                     [원문 텍스트]
                     {body_text}
                     """
-                    res = client.models.generate_content(model=target_model, contents=summary_prompt)
-                    ai_summary = res.text
+                    ai_summary = generate_with_fallback(client, summary_prompt)
                 except Exception as e:
                     ai_summary = f"⚠️ 요약 중 에러 발생: {str(e)}"
 
@@ -103,7 +107,6 @@ def generate_blog_post(use_scraped_data):
         return "🚨 [오류] API 키가 설정되지 않았습니다."
     try:
         client = genai.Client(api_key=API_KEY)
-        target_model = get_valid_model(client)
         
         topic = st.session_state.topic_input
         keyword = st.session_state.keyword_input
@@ -153,12 +156,7 @@ def generate_blog_post(use_scraped_data):
         3. 정보는 정확하며 출처(참고자료)가 명확하게 반영되었는가?
         """
         
-        res = client.models.generate_content(
-            model=target_model, 
-            contents=prompt, 
-            config={"temperature": 0.85}
-        )
-        return res.text
+        return generate_with_fallback(client, prompt, config={"temperature": 0.85})
 
     except Exception as e:
         return f"❌ 오류 발생: {str(e)}"
