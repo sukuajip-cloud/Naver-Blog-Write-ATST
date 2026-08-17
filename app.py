@@ -7,7 +7,7 @@ import random
 # 페이지 기본 설정
 st.set_page_config(page_title="Smart Blog AI Studio", page_icon="✨", layout="wide")
 
-# API 키 가져오기 (Secrets 연동)
+# API 키 가져오기
 API_KEY = st.secrets.get("GEMINI_API_KEY")
 
 # 세션 상태(Session State) 설정
@@ -23,12 +23,11 @@ def clear_inputs():
     st.session_state.url_input = ""
     st.session_state.text_input = ""
 
-# 💡 텍스트와 대표 이미지를 함께 추출하는 함수로 업그레이드
+# 💡 텍스트, 이미지, 제품명, 가격을 모두 추출하는 함수
 def fetch_product_data(url):
     if not url or "http" not in url:
-        return "", ""
+        return "", "", "", ""
     try:
-        # 사람인 것처럼 속이는 헤더 정보 강화
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -37,43 +36,52 @@ def fetch_product_data(url):
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 1. 대표 이미지(og:image) 추출
+            # 1. 대표 이미지 추출
             img_url = ""
             og_image = soup.find('meta', property='og:image')
             if og_image and og_image.get('content'):
                 img_url = og_image['content']
-                # 주소가 //로 시작하는 경우 방지
                 if img_url.startswith('//'):
                     img_url = 'https:' + img_url
 
-            # 2. 텍스트 추출
+            # 2. 제품명 추출 (og:title 또는 문서 title)
+            product_name = ""
+            og_title = soup.find('meta', property='og:title')
+            if og_title and og_title.get('content'):
+                product_name = og_title['content']
+            elif soup.title:
+                product_name = soup.title.string.strip()
+
+            # 3. 가격 정보 추출 (og:price 태그가 있는 경우)
+            product_price = ""
+            og_price = soup.find('meta', property='product:price:amount')
+            if og_price and og_price.get('content'):
+                product_price = og_price['content'] + "원"
+
+            # 4. 전체 텍스트 추출 (AI 분석용)
             for s in soup(["script", "style"]):
                 s.decompose()
             text = soup.get_text(separator=' ', strip=True)[:3000]
             
-            return text, img_url
+            return text, img_url, product_name, product_price
     except Exception as e:
-        return "", ""
-    return "", ""
+        return "", "", "", ""
+    return "", "", "", ""
 
 def generate_blog_post(topic, raw_text, product_url, tone, creativity, expertise, friendliness, photo_style):
     if not API_KEY:
-        return "🚨 [오류] Streamlit Secrets에 'GEMINI_API_KEY'가 설정되지 않았습니다.", ""
+        return "🚨 [오류] Streamlit Secrets에 'GEMINI_API_KEY'가 설정되지 않았습니다.", "", "", ""
     
     try:
         client = genai.Client(api_key=API_KEY)
         
         # 크롤링 실행
-        scraped_content, scraped_img_url = fetch_product_data(product_url)
+        scraped_content, scraped_img_url, scraped_name, scraped_price = fetch_product_data(product_url)
         
         available_models = [m.name.replace('models/', '') for m in client.models.list() 
                             if 'gemini' in m.name and 'embed' not in m.name and 'aqa' not in m.name]
         
-        intro_styles = [
-            "독자의 고민이나 공감대로 흥미롭게 시작", 
-            "반전 있는 경험담이나 솔직한 첫인상으로 시작", 
-            "질문형 문장으로 독자의 호기심을 자극하며 시작"
-        ]
+        intro_styles = ["독자의 고민이나 공감대로 시작", "솔직한 첫인상으로 시작", "호기심을 자극하며 시작"]
         selected_intro = random.choice(intro_styles)
         
         prompt = f"""
@@ -85,15 +93,17 @@ def generate_blog_post(topic, raw_text, product_url, tone, creativity, expertise
         [입력 데이터] 
         - 주제: {topic}
         - 메모: {raw_text}
+        - 추출된 제품명: {scraped_name}
+        - 추출된 가격: {scraped_price}
         - 참고URL 텍스트: {scraped_content}
-        - 참고URL 대표이미지: {scraped_img_url}
+        - 참고 URL: {product_url}
 
-        [가이드]
-        1. 고정된 틀(개요-장단점 등)에서 벗어나 유연하고 자연스러운 소제목 활용
-        2. 이미지 배치 ({photo_style}): 
-           - 만약 [참고URL 대표이미지]에 주소가 있다면, 글의 가장 자연스러운 상단에 `![상품 대표 이미지]({scraped_img_url})` 마크다운을 넣어 실제 사진이 렌더링되게 해주세요.
-           - 나머지 사진들은 기존처럼 `[📸 이미지: (필요한 사진 구체적 묘사)]` 형식과 캡션 1줄로 가이드해주세요.
-        3. 네이버 블로그 감성에 맞는 해시태그 5~7개 마무리
+        [작성 가이드]
+        1. AI 분석: 추출된 제품명({scraped_name})과 가격({scraped_price}), 텍스트 정보를 바탕으로 정확한 스펙과 상품 정보를 글에 자연스럽게 녹여내세요.
+        2. 이미지 가이드 ({photo_style}): 
+           - 만약 크롤링된 이미지가 있다면, 최상단에 `![상품 대표 이미지]({scraped_img_url})` 마크다운을 넣어 출력되게 하세요.
+           - 그 외 글 중간중간 `[📸 이미지: (필요한 사진 구체적 묘사)]` 와 센스있는 캡션 1줄을 넣으세요.
+        3. 마무리 시 독자들이 제품을 확인할 수 있도록 자연스럽게 참고 URL(리뷰/구매 링크)을 안내하고, 해시태그 5~7개로 마무리하세요.
         """
         
         for model_name in available_models:
@@ -103,12 +113,12 @@ def generate_blog_post(topic, raw_text, product_url, tone, creativity, expertise
                     contents=prompt,
                     config={"temperature": creativity}
                 )
-                return response.text, scraped_img_url
+                return response.text, scraped_img_url, scraped_name, scraped_price
             except:
                 continue
-        return "❌ 사용 가능한 모델을 찾을 수 없습니다.", ""
+        return "❌ 사용 가능한 모델을 찾을 수 없습니다.", "", "", ""
     except Exception as e:
-        return f"❌ 오류 발생: {str(e)}", ""
+        return f"❌ 오류 발생: {str(e)}", "", "", ""
 
 # UI 화면 구성
 st.title("✨ Smart Blog AI Studio")
@@ -142,19 +152,24 @@ with col2:
             st.warning("주제를 입력해 주세요!")
         else:
             with st.spinner("AI가 상품 정보를 읽고 최적의 원고를 작성 중입니다..."):
-                result_text, img_url = generate_blog_post(topic, raw_text, product_url, tone, creativity, expertise, friendliness, photo_style)
+                result_text, img_url, prod_name, prod_price = generate_blog_post(topic, raw_text, product_url, tone, creativity, expertise, friendliness, photo_style)
                 
-                # 💡 쇼핑몰 보안에 막히지 않고 이미지를 성공적으로 가져왔다면 화면에 띄워줍니다!
-                if img_url:
-                    st.success("✅ AI가 링크 속 상품 이미지를 확인했습니다!")
-                    st.image(img_url, width=250, caption="크롤링된 상품 대표 이미지")
-                elif product_url:
-                    st.info("⚠️ 링크 내용은 읽었으나, 해당 쇼핑몰 보안으로 인해 이미지는 직접 가져오지 못했습니다.")
+                # 💡 정보 요약 브리핑 UI (이미지, 제품명, 가격)
+                if product_url:
+                    with st.container(border=True):
+                        st.markdown("##### 🔍 AI가 파악한 링크 정보")
+                        info_col1, info_col2 = st.columns([1, 2])
+                        with info_col1:
+                            if img_url:
+                                st.image(img_url, use_container_width=True)
+                            else:
+                                st.write("🖼️ 이미지 차단됨")
+                        with info_col2:
+                            st.write(f"**제품명:** {prod_name if prod_name else '알 수 없음 (텍스트 내용 참조)'}")
+                            st.write(f"**가격:** {prod_price if prod_price else '본문 텍스트 내에서 탐색함'}")
                 
-                # 원고 출력 (텍스트 박스 대신 마크다운으로 렌더링되도록 st.markdown 사용)
                 st.markdown(result_text)
                 
-                # 복사용 텍스트 제공
                 with st.expander("📝 복사하기 전용 텍스트창 (클릭해서 열기)"):
                     st.text_area("아래 내용을 복사하세요", value=result_text, height=300, label_visibility="collapsed")
     else:
