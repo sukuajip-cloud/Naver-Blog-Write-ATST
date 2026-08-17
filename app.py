@@ -28,12 +28,17 @@ def url_changed():
     st.session_state.scraped_data = None
     st.session_state.generated_text = None
 
-# --- 💡 독하게 튜닝한 크롤링 엔진 ---
+# --- 💡 독하게 튜닝한 크롤링 엔진 (네이버 블로그 우회 기능 추가) ---
 def fetch_product_info(url):
     if not url or "http" not in url:
         return None
     
     try:
+        # 💡 [핵심 비법] 네이버 블로그 PC 주소는 이중 구조(iframe)로 본문이 숨겨져 있습니다.
+        # 이를 파훼하기 위해 강제로 모바일(m.blog.naver.com) 주소로 변환하여 접속합니다!
+        if "blog.naver.com" in url and "m.blog.naver.com" not in url:
+            url = url.replace("blog.naver.com", "m.blog.naver.com")
+
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -58,21 +63,22 @@ def fetch_product_info(url):
             if og_title and og_title.get('content'): title = og_title['content']
             elif soup.title: title = soup.title.string.strip()
 
-            # 3. 요약 내용 추출
+            # 3. 요약 내용 추출 (메타데이터 백업용)
             desc = ""
             og_desc = soup.find('meta', property='og:description') or soup.find('meta', attrs={'name': 'description'})
             if og_desc and og_desc.get('content'): desc = og_desc['content']
 
-            # 4. 가격 추출
+            # 4. 가격 추출 (쇼핑몰인 경우)
             price = ""
             og_price = soup.find('meta', property='product:price:amount')
             if og_price and og_price.get('content'): price = og_price['content'] + "원"
 
-            # 5. 전체 본문 추출 시도
-            for s in soup(["script", "style", "nav", "footer"]): s.decompose()
+            # 5. 전체 본문 텍스트 긁어오기 (쓸데없는 스크립트, 메뉴판 등은 날려버림)
+            for s in soup(["script", "style", "nav", "footer", "header"]): 
+                s.decompose()
             body_text = soup.get_text(separator=' ', strip=True)
             
-            # 본문을 최대 3000자까지 확보 (블로그 작성 AI에게 전달할 용도)
+            # 본문이 100자 이상 정상적으로 긁혔으면 본문 사용, 아니면 요약본(desc) 사용
             final_text = body_text[:3000] if len(body_text) > 100 else f"요약 설명: {desc}"
 
             return {"title": title, "price": price, "img": img_url, "desc": desc, "body": final_text}
@@ -109,15 +115,15 @@ def generate_blog_post():
         [입력 데이터] 
         - 블로그 주제: {topic}
         - 나의 메모/후기: {raw_text}
-        - 참고 상품명: {s_title}
+        - 참고 자료 제목: {s_title}
         - 참고 가격: {s_price}
-        - 참고 상품 상세내용: {s_body}
-        - 상품 링크: {url}
+        - 참고 자료 상세내용: {s_body}
+        - 참고 링크: {url}
 
         [작성 가이드]
-        1. 정보 통합: 제공된 '참고 상품명'과 '상세내용'을 철저히 분석하여 스펙, 특징 등을 원고에 정확히 반영하세요.
+        1. 정보 통합: 제공된 '참고 자료 상세내용'을 철저히 분석하여 핵심 내용, 스펙, 특징 등을 원고에 정확히 반영하세요.
         2. 이미지 가이드: 
-           - 최상단에 `![상품 이미지]({s_img})` 마크다운을 넣어 실제 제품 사진이 보이게 하세요.
+           - 최상단에 `![참고 이미지]({s_img})` 마크다운을 넣어 이미지가 보이게 하세요.
            - 중간중간 `[📸 이미지: (필요한 사진 구체적 묘사)]` 와 센스있는 캡션을 넣으세요.
         3. 소제목을 활용하여 가독성을 높이고, 해시태그 5~7개로 마무리하세요.
         """
@@ -141,7 +147,7 @@ col1, col2 = st.columns([1, 1.2])
 with col1:
     st.subheader("📝 핵심 정보 입력")
     st.text_input("1. 블로그 주제", key="topic_input", placeholder="예: 차박용 미니 로봇청소기 사용 후기")
-    st.text_input("2. 참고 상품 링크 (선택)", key="url_input", on_change=url_changed, placeholder="쿠팡, 네이버 쇼핑 등 URL")
+    st.text_input("2. 참고 자료/상품 링크 (선택)", key="url_input", on_change=url_changed, placeholder="네이버 블로그, 쿠팡 등 URL")
     st.text_area("3. 나의 실제 후기/메모", key="text_input", height=130, placeholder="메모할 내용 입력...")
     
     st.toggle("⚙️ 고급 설정 열기 (톤/스타일 등)", key="adv_settings")
@@ -157,7 +163,7 @@ with col1:
     with btn_col1:
         if st.button("🔍 1차 검토 (정보 불러오기)", use_container_width=True):
             if st.session_state.url_input:
-                with st.spinner("상품 정보를 긁어오고 있습니다..."):
+                with st.spinner("링크의 내용을 구석구석 읽어오고 있습니다..."):
                     st.session_state.scraped_data = fetch_product_info(st.session_state.url_input)
             else:
                 st.warning("URL을 먼저 입력해주세요.")
@@ -167,7 +173,7 @@ with col1:
             if not st.session_state.topic_input:
                 st.warning("주제를 입력해주세요!")
             else:
-                with st.spinner("AI가 상품 정보를 바탕으로 원고를 작성 중입니다..."):
+                with st.spinner("AI가 수집된 정보를 바탕으로 원고를 작성 중입니다..."):
                     st.session_state.generated_text = generate_blog_post()
                     
     if st.button("🗑️ 모든 내용 초기화", on_click=clear_inputs, use_container_width=True):
@@ -176,25 +182,22 @@ with col1:
 with col2:
     st.subheader("📄 검토 및 완성된 원고")
     
-    # 💡 1차 검토 결과 UI 개선 (내용 미리보기 확장)
     if st.session_state.scraped_data:
-        st.success("💡 1차 검토: URL에서 아래 정보를 확인했습니다.")
+        st.success("💡 1차 검토: URL에서 아래 내용을 성공적으로 읽어왔습니다.")
         with st.container(border=True):
             c1, c2 = st.columns([1, 2])
             with c1:
                 img = st.session_state.scraped_data.get("img")
                 if img: st.image(img)
-                else: st.write("🖼️ 이미지 차단됨")
+                else: st.write("🖼️ 이미지 없음")
             with c2:
-                st.write(f"**제품명:** {st.session_state.scraped_data.get('title', '없음')}")
-                st.write(f"**가격:** {st.session_state.scraped_data.get('price', '없음')}")
+                st.write(f"**제목/제품명:** {st.session_state.scraped_data.get('title', '없음')}")
+                st.write(f"**가격(쇼핑몰인 경우):** {st.session_state.scraped_data.get('price', '없음')}")
             
             st.markdown("---")
-            # 말줄임표 없이 깔끔하게 1000자까지 텍스트 출력
             preview_text = st.session_state.scraped_data.get("body", "")[:1000]
-            st.markdown(f"**내용 미리보기 (최대 1000자):**\n\n{preview_text}")
+            st.markdown(f"**📖 본문 내용 미리보기 (최대 1000자):**\n\n{preview_text}")
 
-    # 최종 작성된 원고 출력
     if st.session_state.generated_text:
         st.markdown("---")
         st.markdown(st.session_state.generated_text)
