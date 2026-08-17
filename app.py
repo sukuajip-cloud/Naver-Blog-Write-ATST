@@ -9,138 +9,130 @@ st.set_page_config(page_title="Smart Blog AI Studio", page_icon="✨", layout="w
 
 API_KEY = st.secrets.get("GEMINI_API_KEY")
 
-# --- 💡 세션 상태(Session State) 완벽 관리 ---
+# --- 세션 상태(Session State) 관리 ---
 for key in ["topic_input", "url_input", "text_input"]:
     if key not in st.session_state:
         st.session_state[key] = ""
 
-if "adv_settings" not in st.session_state: st.session_state.adv_settings = False
 if "scraped_data" not in st.session_state: st.session_state.scraped_data = None
 if "generated_text" not in st.session_state: st.session_state.generated_text = None
+if "adv_settings" not in st.session_state: st.session_state.adv_settings = False
 
-# 고급 설정용 키
-if "tone" not in st.session_state: st.session_state.tone = "친근한 내돈내산 리뷰형"
-if "photo_style" not in st.session_state: st.session_state.photo_style = "상세하고 구체적인 묘사형"
-if "creativity" not in st.session_state: st.session_state.creativity = 0.8
-if "expertise" not in st.session_state: st.session_state.expertise = 7
-if "friendliness" not in st.session_state: st.session_state.friendliness = 9
-
-# 콜백 함수들
 def clear_inputs():
-    for key in ["topic_input", "url_input", "text_input"]:
-        st.session_state[key] = ""
-    st.session_state.scraped_data = None
-    st.session_state.generated_text = None
-    st.session_state.adv_settings = False
-
-def on_url_change():
-    # URL이 바뀌면 가져왔던 기존 데이터와 원고를 싹 초기화하여 1단계로 되돌림
+    st.session_state.topic_input = ""
+    st.session_state.url_input = ""
+    st.session_state.text_input = ""
     st.session_state.scraped_data = None
     st.session_state.generated_text = None
 
-def close_adv_settings():
-    # 버튼을 누르면 고급 설정 창이 자동으로 닫힘
-    st.session_state.adv_settings = False
+def url_changed():
+    st.session_state.scraped_data = None
+    st.session_state.generated_text = None
 
-# 크롤링 함수
-def fetch_product_data_action():
-    url = st.session_state.url_input
+# --- 💡 독하게 튜닝한 크롤링 엔진 (방화벽 우회 및 메타데이터 추출 강화) ---
+def fetch_product_info(url):
     if not url or "http" not in url:
-        st.session_state.scraped_data = {"text": "", "img": "", "name": "URL을 확인해주세요", "price": ""}
-        return
+        return None
     
     try:
+        # 봇(Bot)이 아닌 실제 사람 브라우저처럼 완벽하게 위장
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept-Language': 'ko-KR,ko;q=0.9',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+            'Referer': 'https://www.google.com/'
         }
-        res = requests.get(url, headers=headers, timeout=5)
+        res = requests.get(url, headers=headers, timeout=8)
+        
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
             
+            # 1. 이미지 추출
             img_url = ""
-            og_image = soup.find('meta', property='og:image')
-            if og_image and og_image.get('content'):
-                img_url = og_image['content']
+            og_img = soup.find('meta', property='og:image')
+            if og_img and og_img.get('content'):
+                img_url = og_img['content']
                 if img_url.startswith('//'): img_url = 'https:' + img_url
 
-            product_name = ""
+            # 2. 제목 추출 (쇼핑몰 방화벽에 막혀도 제목은 보통 노출됨)
+            title = ""
             og_title = soup.find('meta', property='og:title')
-            if og_title and og_title.get('content'):
-                product_name = og_title['content']
-            elif soup.title:
-                product_name = soup.title.string.strip()
+            if og_title and og_title.get('content'): title = og_title['content']
+            elif soup.title: title = soup.title.string.strip()
 
-            product_price = ""
+            # 3. 요약 내용 추출 (본문이 막힐 경우를 대비한 Description 추출)
+            desc = ""
+            og_desc = soup.find('meta', property='og:description') or soup.find('meta', attrs={'name': 'description'})
+            if og_desc and og_desc.get('content'): desc = og_desc['content']
+
+            # 4. 가격 추출
+            price = ""
             og_price = soup.find('meta', property='product:price:amount')
-            if og_price and og_price.get('content'):
-                product_price = og_price['content'] + "원"
+            if og_price and og_price.get('content'): price = og_price['content'] + "원"
 
-            for s in soup(["script", "style"]): s.decompose()
-            text = soup.get_text(separator=' ', strip=True)[:3000]
+            # 5. 전체 본문 추출 시도
+            for s in soup(["script", "style", "nav", "footer"]): s.decompose()
+            body_text = soup.get_text(separator=' ', strip=True)
             
-            st.session_state.scraped_data = {
-                "text": text, "img": img_url, "name": product_name, "price": product_price
-            }
-        else:
-            st.session_state.scraped_data = {"text": "", "img": "", "name": "페이지 접근 차단됨", "price": ""}
-    except Exception as e:
-        st.session_state.scraped_data = {"text": "", "img": "", "name": "크롤링 에러", "price": ""}
+            # 본문이 너무 짧거나 막혔을 경우 메타(요약) 데이터로 대체
+            final_text = body_text[:3000] if len(body_text) > 100 else f"요약 설명: {desc}"
 
-# 생성 함수
-def execute_generation():
+            return {"title": title, "price": price, "img": img_url, "desc": desc, "body": final_text}
+        else:
+            return {"title": f"접근 차단됨 (상태코드 {res.status_code})", "price": "", "img": "", "desc": "", "body": ""}
+    except Exception as e:
+        return {"title": f"크롤링 에러 ({str(e)})", "price": "", "img": "", "desc": "", "body": ""}
+
+# --- 💡 블로그 자동 완성 엔진 ---
+def generate_blog_post():
     if not API_KEY:
-        return "🚨 [오류] Streamlit Secrets에 'GEMINI_API_KEY'가 설정되지 않았습니다."
+        return "🚨 [오류] API 키가 설정되지 않았습니다."
     try:
         client = genai.Client(api_key=API_KEY)
         
-        # 세션에 저장된 값 불러오기
-        topic, url, raw_text = st.session_state.topic_input, st.session_state.url_input, st.session_state.text_input
-        tone, photo_style = st.session_state.tone, st.session_state.photo_style
-        creativity, expertise, friendliness = st.session_state.creativity, st.session_state.expertise, st.session_state.friendliness
-
-        if st.session_state.scraped_data:
-            s_content, s_img = st.session_state.scraped_data["text"], st.session_state.scraped_data["img"]
-            s_name, s_price = st.session_state.scraped_data["name"], st.session_state.scraped_data["price"]
+        topic = st.session_state.topic_input
+        url = st.session_state.url_input
+        raw_text = st.session_state.text_input
+        
+        s_data = st.session_state.scraped_data
+        if s_data:
+            s_title = s_data.get("title", "")
+            s_price = s_data.get("price", "")
+            s_body = s_data.get("body", "")
+            s_img = s_data.get("img", "")
         else:
-            s_content, s_img, s_name, s_price = "", "", "", ""
-        
-        available_models = [m.name.replace('models/', '') for m in client.models.list() 
-                            if 'gemini' in m.name and 'embed' not in m.name and 'aqa' not in m.name]
-        
-        intro_styles = ["독자의 고민이나 공감대로 시작", "솔직한 첫인상으로 시작", "호기심을 자극하며 시작"]
-        selected_intro = random.choice(intro_styles)
+            s_title, s_price, s_body, s_img = "", "", "", ""
+            
+        models = [m.name.replace('models/', '') for m in client.models.list() if 'gemini' in m.name and 'embed' not in m.name and 'aqa' not in m.name]
         
         prompt = f"""
         당신은 트렌디하고 감각적인 네이버 블로그 포스팅 전문 크리에이터입니다.
-        이번 포스팅은 **{selected_intro}** 방식으로 신선하게 전개해 주세요.
-        
-        [스타일] 톤: {tone}, 전문성: {expertise}, 친밀도: {friendliness}
         
         [입력 데이터] 
-        - 주제: {topic}
-        - 메모: {raw_text}
-        - 제품명: {s_name}
-        - 가격: {s_price}
-        - 참고URL 정보: {s_content}
-        - 참고 URL 링크: {url}
+        - 블로그 주제: {topic}
+        - 나의 메모/후기: {raw_text}
+        - 참고 상품명: {s_title}
+        - 참고 가격: {s_price}
+        - 참고 상품 상세내용: {s_body}
+        - 상품 링크: {url}
 
         [작성 가이드]
-        1. 정보 분석: 제품명({s_name})과 가격({s_price}), 텍스트 정보를 바탕으로 정확한 스펙을 글에 자연스럽게 녹여내세요.
-        2. 이미지 가이드 ({photo_style}): 
-           - 최상단에 `![상품 대표 이미지]({s_img})` 마크다운을 넣어 실제 제품 사진이 보이게 하세요.
-           - 글 중간중간 `[📸 이미지: (필요한 사진 구체적 묘사)]` 와 센스있는 캡션을 넣으세요.
-        3. 마무리 시 독자들이 제품을 확인할 수 있도록 자연스럽게 참고 URL(리뷰/구매 링크)을 안내하고, 해시태그 5~7개로 마무리하세요.
+        1. 정보 통합: 제공된 '참고 상품명'과 '상세내용'을 철저히 분석하여 스펙, 특징 등을 원고에 정확히 반영하세요. (상품 내용이 부족하면 URL과 주제를 기반으로 추론하세요.)
+        2. 이미지 가이드: 
+           - 최상단에 `![상품 이미지]({s_img})` 마크다운을 넣어 실제 제품 사진이 보이게 하세요.
+           - 중간중간 `[📸 이미지: (필요한 사진 구체적 묘사)]` 와 센스있는 캡션을 넣으세요.
+        3. 소제목을 활용하여 가독성을 높이고, 해시태그 5~7개로 마무리하세요.
         """
         
-        for model_name in available_models:
+        for m_name in models:
             try:
-                response = client.models.generate_content(model=model_name, contents=prompt, config={"temperature": creativity})
+                response = client.models.generate_content(model=m_name, contents=prompt, config={"temperature": 0.8})
                 return response.text
             except: continue
         return "❌ 사용 가능한 모델을 찾을 수 없습니다."
     except Exception as e:
         return f"❌ 오류 발생: {str(e)}"
+
 
 # --- UI 화면 구성 ---
 st.title("✨ Smart Blog AI Studio")
@@ -151,70 +143,63 @@ col1, col2 = st.columns([1, 1.2])
 with col1:
     st.subheader("📝 핵심 정보 입력")
     st.text_input("1. 블로그 주제", key="topic_input", placeholder="예: 차박용 미니 로봇청소기 사용 후기")
-    # URL이 입력되거나 지워지면 실시간으로 상태 초기화
-    st.text_input("2. 참고 상품 링크 (선택)", key="url_input", on_change=on_url_change, placeholder="쿠팡, 스마트스토어 등 URL")
-    st.text_area("3. 나의 실제 후기/메모", key="text_input", height=130, placeholder="직접 써보니 가볍고 좋은데 배터리가 살짝 아쉬움...")
+    st.text_input("2. 참고 상품 링크 (선택)", key="url_input", on_change=url_changed, placeholder="쿠팡, 네이버 쇼핑 등 URL")
+    st.text_area("3. 나의 실제 후기/메모", key="text_input", height=130, placeholder="메모할 내용 입력...")
     
-    # 💡 토글 스위치로 변경 (자동으로 닫기 가능)
-    st.toggle("⚙️ AI 페르소나 및 고급 설정 열기", key="adv_settings")
+    st.toggle("⚙️ 고급 설정 열기 (톤/스타일 등)", key="adv_settings")
     if st.session_state.adv_settings:
         with st.container(border=True):
-            st.selectbox("글쓰기 톤", ["친근한 내돈내산 리뷰형", "정보 전달 전문 블로거형", "재치있는 에세이형", "진중한 분석형"], key="tone")
-            st.selectbox("사진 가이드", ["상세하고 구체적인 묘사형", "감성적이고 직관적인 스냅형"], key="photo_style")
-            st.slider("창의성 (Temperature)", 0.2, 1.0, 0.8, 0.1, key="creativity")
-            st.slider("전문성", 1, 10, 7, key="expertise")
-            st.slider("친밀도", 1, 10, 9, key="friendliness")
+            st.info("이 기능은 추후 업데이트를 통해 텍스트 프롬프트에 동적으로 반영될 예정입니다. 현재는 숨겨진 기본값으로 작성됩니다.")
     
-    # 💡 2단계 로직 적용 버튼
-    btn_col1, btn_col2 = st.columns([3, 1])
+    # 💡 명확하게 분리된 3개의 액션 버튼
+    st.markdown("---")
+    st.markdown("##### 🛠️ 작업 실행")
+    
+    btn_col1, btn_col2 = st.columns(2)
     with btn_col1:
-        # URL이 있는데 아직 정보를 안 가져온 경우 1단계 버튼 노출
-        if st.session_state.url_input and not st.session_state.scraped_data:
-            do_fetch = st.button("🔍 1단계: 링크 상품정보 미리보기", use_container_width=True, type="primary", on_click=close_adv_settings)
-            do_gen = False
-        else:
-            do_fetch = False
-            # URL이 없거나 이미 가져왔다면 최종 작성 버튼 노출
-            do_gen = st.button("🚀 2단계: 블로그 원고 자동 완성", use_container_width=True, type="primary", on_click=close_adv_settings)
-            
+        if st.button("🔍 1차 검토 (정보 불러오기)", use_container_width=True):
+            st.session_state.adv_settings = False
+            if st.session_state.url_input:
+                with st.spinner("상품 정보를 긁어오고 있습니다..."):
+                    st.session_state.scraped_data = fetch_product_info(st.session_state.url_input)
+            else:
+                st.warning("URL을 먼저 입력해주세요.")
+                
     with btn_col2:
-        st.button("🗑️ 초기화", on_click=clear_inputs, use_container_width=True)
+        if st.button("🚀 최종 블로그 원고 작성", type="primary", use_container_width=True):
+            st.session_state.adv_settings = False
+            if not st.session_state.topic_input:
+                st.warning("주제를 입력해주세요!")
+            else:
+                with st.spinner("AI가 상품 정보를 바탕으로 원고를 작성 중입니다..."):
+                    st.session_state.generated_text = generate_blog_post()
+                    
+    if st.button("🗑️ 모든 내용 초기화", on_click=clear_inputs, use_container_width=True):
+        pass
 
 with col2:
     st.subheader("📄 검토 및 완성된 원고")
     
-    # 1. 정보 가져오기 실행
-    if do_fetch:
-        with st.spinner("해당 링크의 상품 사진과 정보를 꼼꼼히 확인하고 있습니다..."):
-            fetch_product_data_action()
-        st.rerun() # UI 업데이트
-
-    # 2. 가져온 정보 브리핑 화면 보여주기
+    # 1차 검토 결과 (정보 확인창)
     if st.session_state.scraped_data:
-        st.info("💡 링크에서 확인한 내용입니다. 이 정보가 맞다면 좌측의 **[2단계: 블로그 원고 자동 완성]** 버튼을 누르세요.")
+        st.success("💡 1차 검토: URL에서 아래 정보를 확인했습니다.")
         with st.container(border=True):
-            info_col1, info_col2 = st.columns([1, 2])
-            with info_col1:
-                img = st.session_state.scraped_data["img"]
-                if img: st.image(img, use_container_width=True)
-                else: st.write("🖼️ 이미지 확인 불가")
-            with info_col2:
-                st.write(f"**제품명:** {st.session_state.scraped_data['name']}")
-                st.write(f"**가격:** {st.session_state.scraped_data['price']}")
-                
-    # 3. 원고 자동 완성 실행
-    if do_gen:
-        if not st.session_state.topic_input:
-            st.warning("주제를 먼저 입력해 주세요!")
-        else:
-            with st.spinner("AI가 최적의 원고를 작성 중입니다... (약 10~20초 소요)"):
-                st.session_state.generated_text = execute_generation()
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                img = st.session_state.scraped_data.get("img")
+                if img: st.image(img)
+                else: st.write("🖼️ 이미지 차단됨")
+            with c2:
+                st.write(f"**제품명:** {st.session_state.scraped_data.get('title', '없음')}")
+                st.write(f"**가격:** {st.session_state.scraped_data.get('price', '없음')}")
+                # 긁어온 본문 중 앞부분 150자만 미리보기로 보여줌
+                preview_text = st.session_state.scraped_data.get("body", "")[:150]
+                st.caption(f"**내용 미리보기:** {preview_text}...")
 
-    # 4. 완성된 원고 출력
+    # 최종 작성된 원고 출력
     if st.session_state.generated_text:
         st.markdown("---")
-        st.success("✅ 원고 작성이 완료되었습니다!")
         st.markdown(st.session_state.generated_text)
         
-        with st.expander("📝 복사하기 전용 텍스트창 (클릭해서 열기)"):
-            st.text_area("아래 내용을 전체 선택하여 네이버 블로그에 붙여넣으세요.", value=st.session_state.generated_text, height=300, label_visibility="collapsed")
+        with st.expander("📝 복사하기 전용 텍스트창"):
+            st.text_area("전체 복사 후 블로그에 붙여넣으세요.", value=st.session_state.generated_text, height=300, label_visibility="collapsed")
